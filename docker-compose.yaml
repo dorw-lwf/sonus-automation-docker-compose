@@ -1,0 +1,72 @@
+version: '3.8'
+
+services:
+  dasSimulator:
+    image: 631045770794.dkr.ecr.eu-central-1.amazonaws.com/sdc_app:main
+    hostname: dasSimulator
+    volumes:
+      - /mnt/nvme/LocalData/Tx/Hdf5/Morocco/:/mnt/Tx/hdf5
+      - /mnt/nvme/Data/AutomationUtils:/mnt/nvme/Data/AutomationUtils
+      - /opt/lwf/etc:/opt/lwf/etc
+      - /mnt/nvme/LocalData/Rx/automationBinDir:/mnt/Tx/bin
+    environment:
+      COMPONENT: dasSimulator
+    command: >
+      -d false -f /mnt/Tx/hdf5/ -c true -p 12350 -a true -l true
+    deploy:
+      placement:
+        constraints:
+          - node.role == manager
+
+  sdp-bin:
+    image: 631045770794.dkr.ecr.eu-central-1.amazonaws.com/sdc_app:main
+    hostname: sdp-bin
+    volumes:
+      - /mnt/nvme/LocalData/Rx/:/mnt/nvme/LocalData/Rx/
+      - /opt/lwf/etc:/opt/lwf/etc
+    environment:
+      COMPONENT: sdp
+    command: >
+      -i 192.168.1.1 --redis-ip 10.0.1.12 -d 0 -f /mnt/nvme/LocalData/Rx/ -p 12350 -l 1
+    deploy:
+      placement:
+        constraints:
+          - node.role == worker
+
+  redis:
+    image: redis:7.4.1
+    hostname: redis
+    restart: unless-stopped
+    ports:
+      - "6379:6379"  # Expose Redis port 6379 to the outside
+    healthcheck:
+      test: redis-cli ping | grep PONG
+      interval: 1s
+      timeout: 3s
+      retries: 5
+    command: redis-server --bind 0.0.0.0 --appendonly no --save ""
+    logging:
+      options:
+        tag: "{{.Name}}"
+    labels:
+      - "com.centurylinklabs.watchtower.enable=false"
+    deploy:
+      placement:
+        constraints:
+          - node.role == worker  # Ensure Redis runs on edge2 (worker)
+
+  setup_redis:
+    image: redis:7.4.1
+    hostname: setup_redis
+    restart: "no"
+    depends_on:
+      - redis
+    entrypoint: [
+      "bash", "-c", "redis-cli -h redis XGROUP CREATE PhaseRaw HDF5Inference $$ MKSTREAM"
+    ]
+    labels:
+      - "com.centurylinklabs.watchtower.enable=false"
+    deploy:
+      placement:
+        constraints:
+          - node.role == worker  # Ensure setup_redis runs on edge2 (worker)
